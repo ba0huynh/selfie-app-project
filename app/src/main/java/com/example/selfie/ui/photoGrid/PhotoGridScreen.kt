@@ -33,6 +33,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +59,76 @@ import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.Date
+
+// Custom Cloud Download Icon
+val CloudDownloadIcon: ImageVector
+    get() {
+        if (_cloudDownloadIcon != null) {
+            return _cloudDownloadIcon!!
+        }
+        _cloudDownloadIcon = ImageVector.Builder(
+            name = "CloudDownload",
+            defaultWidth = 24.0.dp,
+            defaultHeight = 24.0.dp,
+            viewportWidth = 24.0f,
+            viewportHeight = 24.0f
+        ).apply {
+            path(
+                fill = null,
+                fillAlpha = 1.0f,
+                stroke = SolidColor(Color.Black),
+                strokeAlpha = 1.0f,
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+                strokeLineMiter = 4.0f,
+                pathFillType = PathFillType.NonZero
+            ) {
+                moveTo(12.0f, 13.0f)
+                verticalLineToRelative(8.0f)
+                lineToRelative(-4.0f, -4.0f)
+            }
+            path(
+                fill = null,
+                fillAlpha = 1.0f,
+                stroke = SolidColor(Color.Black),
+                strokeAlpha = 1.0f,
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+                strokeLineMiter = 4.0f,
+                pathFillType = PathFillType.NonZero
+            ) {
+                moveToRelative(12.0f, 21.0f)
+                lineToRelative(4.0f, -4.0f)
+            }
+            path(
+                fill = null,
+                fillAlpha = 1.0f,
+                stroke = SolidColor(Color.Black),
+                strokeAlpha = 1.0f,
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+                strokeLineMiter = 4.0f,
+                pathFillType = PathFillType.NonZero
+            ) {
+                // Cloud shape - using lines and curves
+                // Start from left side of cloud
+                moveTo(4.0f, 15.0f)
+                // Left arc
+                arcTo(7.0f, 7.0f, 0f, true, true, 16.0f, 8.0f)
+                // Right side
+                horizontalLineToRelative(2.0f)
+                // Right arc
+                arcTo(4.5f, 4.5f, 0f, false, true, 20.0f, 16.5f)
+                // Close the path
+                lineTo(4.0f, 15.0f)
+            }
+        }.build()
+        return _cloudDownloadIcon!!
+    }
+private var _cloudDownloadIcon: ImageVector? = null
 
 // Sealed class to represent both photos and videos
 sealed class MediaItem {
@@ -706,7 +782,7 @@ fun PhotoItem(
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Check,
+                        imageVector = CloudDownloadIcon,
                         contentDescription = "Uploaded to Google Drive",
                         modifier = Modifier
                             .fillMaxSize()
