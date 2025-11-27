@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -22,8 +25,10 @@ import com.example.selfie.ui.photoEdit.PhotoEditScreen
 import com.example.selfie.ui.photoGrid.PhotoGridScreen
 import com.example.selfie.ui.photoViewer.PhotoViewerScreen
 import com.example.selfie.ui.settings.SettingsScreen
+import com.example.selfie.ui.pin.PinVerificationScreen
 import com.example.selfie.ui.theme.SelfieTheme
 import com.example.selfie.work.ReminderScheduler
+import com.example.selfie.data.PreferencesManager
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +44,34 @@ class MainActivity : ComponentActivity() {
                 var refreshKey by remember { mutableStateOf(0) }
                 var photoToEdit by remember { mutableStateOf<ByteArray?>(null) }
                 val initialIntent = remember { intent }
+                val prefs = remember { PreferencesManager(this@MainActivity) }
+                
+                // Check if PIN is enabled
+                val isPinEnabled = remember { prefs.isPinEnabled() && prefs.hasPinSet() }
+                var isPinVerified by remember { mutableStateOf(!isPinEnabled) }
+                
+                // Reset PIN verification when app goes to background
+                DisposableEffect(Unit) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_PAUSE && isPinEnabled) {
+                            // Reset PIN verification when app goes to background
+                            isPinVerified = false
+                        }
+                    }
+                    (this@MainActivity as LifecycleOwner).lifecycle.addObserver(observer)
+                    onDispose {
+                        (this@MainActivity as LifecycleOwner).lifecycle.removeObserver(observer)
+                    }
+                }
+                
+                // Determine start destination
+                val startDestination = remember(isPinEnabled, isPinVerified) {
+                    if (isPinEnabled && !isPinVerified) {
+                        Screen.PinVerification.route
+                    } else {
+                        Screen.PhotoGrid.route
+                    }
+                }
                 
                 // Navigate to camera when notification is clicked
                 LaunchedEffect(initialIntent) {
@@ -58,8 +91,20 @@ class MainActivity : ComponentActivity() {
                 ) {
                     NavHost(
                         navController = navController,
-                        startDestination = Screen.PhotoGrid.route
+                        startDestination = startDestination
                     ) {
+                        composable(Screen.PinVerification.route) {
+                            PinVerificationScreen(
+                                onPinVerified = {
+                                    isPinVerified = true
+                                    navController.navigate(Screen.PhotoGrid.route) {
+                                        // Clear back stack so user can't go back to PIN screen
+                                        popUpTo(0) { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
+                        
                         composable(Screen.PhotoGrid.route) {
                             // Use key to force refresh when coming back from camera
                             key(refreshKey) {
@@ -144,5 +189,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         // Navigation will be handled by recomposition when intent changes
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Check if PIN is enabled and verify when app comes to foreground
+        val prefs = PreferencesManager(this)
+        if (prefs.isPinEnabled() && prefs.hasPinSet()) {
+            // PIN verification will be handled by the composable state
+            // The NavHost will show PIN screen if not verified
+        }
     }
 }

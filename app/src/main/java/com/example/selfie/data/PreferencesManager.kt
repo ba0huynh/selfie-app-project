@@ -18,6 +18,9 @@ class PreferencesManager(context: Context) {
     private val GOOGLE_DRIVE_AUTO_BACKUP_KEY = "google_drive_auto_backup"
     private val GOOGLE_DRIVE_LAST_BACKUP_KEY = "google_drive_last_backup"
     
+    private val PIN_ENABLED_KEY = "pin_enabled"
+    private val PIN_CODE_KEY = "pin_code"
+    
     fun getReminderSettings(): ReminderSettings {
         return ReminderSettings(
             isEnabled = prefs.getBoolean(REMINDER_ENABLED_KEY, true),
@@ -52,6 +55,31 @@ class PreferencesManager(context: Context) {
             putLong(GOOGLE_DRIVE_LAST_BACKUP_KEY, settings.lastBackupTime)
             apply()
         }
+    }
+    
+    fun isPinEnabled(): Boolean {
+        return prefs.getBoolean(PIN_ENABLED_KEY, false)
+    }
+    
+    fun setPinEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(PIN_ENABLED_KEY, enabled).apply()
+    }
+    
+    fun getPinCode(): String {
+        return prefs.getString(PIN_CODE_KEY, "") ?: ""
+    }
+    
+    fun setPinCode(pin: String) {
+        prefs.edit().putString(PIN_CODE_KEY, pin).apply()
+    }
+    
+    fun verifyPin(pin: String): Boolean {
+        val storedPin = getPinCode()
+        return storedPin.isNotEmpty() && storedPin == pin
+    }
+    
+    fun hasPinSet(): Boolean {
+        return getPinCode().isNotEmpty()
     }
 }
 

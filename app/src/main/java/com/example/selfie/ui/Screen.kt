@@ -1,6 +1,7 @@
 package com.example.selfie.ui
 
 sealed class Screen(val route: String) {
+    object PinVerification : Screen("pin_verification")
     object PhotoGrid : Screen("photo_grid")
     object Camera : Screen("camera")
     object PhotoEdit : Screen("photo_edit") {

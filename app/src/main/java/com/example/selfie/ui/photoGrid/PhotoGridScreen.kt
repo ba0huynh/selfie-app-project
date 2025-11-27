@@ -22,8 +22,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import com.example.selfie.util.selectable
 import androidx.compose.runtime.*
@@ -41,8 +41,16 @@ import com.example.selfie.data.PhotoMetadata
 import com.example.selfie.data.PhotoRepository
 import com.example.selfie.data.GoogleDriveManager
 import com.example.selfie.data.PreferencesManager
+import com.example.selfie.util.VideoCreator
 import kotlinx.coroutines.launch
+import android.os.Environment
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.content.Intent
+import android.net.Uri
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.Date
@@ -72,6 +80,14 @@ fun PhotoGridScreen(
     var uploadError by remember { mutableStateOf<String?>(null) }
     var uploadSuccess by remember { mutableStateOf(false) }
     
+    // Video creation state
+    var showVideoDialog by remember { mutableStateOf(false) }
+    var isCreatingVideo by remember { mutableStateOf(false) }
+    var videoProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var videoError by remember { mutableStateOf<String?>(null) }
+    var videoSuccess by remember { mutableStateOf(false) }
+    var createdVideoFile by remember { mutableStateOf<File?>(null) }
+    
     // Check Google Drive connection - refresh when screen is recomposed
     var googleDriveSettings by remember { mutableStateOf(prefs.getGoogleDriveSettings()) }
     val isGoogleDriveConnected = googleDriveSettings.isConnected
@@ -88,6 +104,87 @@ fun PhotoGridScreen(
     
     fun refreshPhotos() {
         photos = repository.getAllPhotos()
+    }
+    
+    fun createVideo(photoList: List<PhotoMetadata>, secondsPerImage: Float) {
+        scope.launch {
+            isCreatingVideo = true
+            videoError = null
+            videoSuccess = false
+            videoProgress = Pair(0, photoList.size)
+            createdVideoFile = null
+            
+            try {
+                // Create output file
+                val videoDir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                    ?: File(context.filesDir, "videos").also { it.mkdirs() }
+                
+                if (!videoDir.exists()) {
+                    videoDir.mkdirs()
+                }
+                
+                if (!videoDir.canWrite()) {
+                    throw Exception("Không có quyền ghi vào thư mục video")
+                }
+                
+                val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                val videoFile = File(videoDir, "timelapse_$timeStamp.mp4")
+                
+                android.util.Log.d("VideoCreation", "Creating video at: ${videoFile.absolutePath}")
+                
+                // Create video
+                val videoCreator = VideoCreator()
+                val photoFiles = photoList.map { it.file }
+                val result = videoCreator.createVideoFromImages(
+                    imageFiles = photoFiles,
+                    outputFile = videoFile,
+                    secondsPerImage = secondsPerImage,
+                    onProgress = { current, total ->
+                        videoProgress = Pair(current, total)
+                    }
+                )
+                
+                if (result.isSuccess) {
+                    // Save to MediaStore for gallery access (Android 10+)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.Video.Media.DISPLAY_NAME, videoFile.name)
+                            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
+                        }
+                        
+                        val uri = context.contentResolver.insert(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            contentValues
+                        )
+                        
+                        uri?.let {
+                            context.contentResolver.openOutputStream(it)?.use { outputStream ->
+                                videoFile.inputStream().use { inputStream ->
+                                    inputStream.copyTo(outputStream)
+                                }
+                            }
+                            // Delete temporary file after copying
+                            videoFile.delete()
+                        }
+                    }
+                    
+                    createdVideoFile = videoFile
+                    videoSuccess = true
+                    videoError = null
+                } else {
+                    val exception = result.exceptionOrNull()
+                    val errorMsg = exception?.message ?: "Lỗi không xác định khi tạo video"
+                    android.util.Log.e("VideoCreation", "Video creation failed", exception)
+                    videoError = errorMsg
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("VideoCreation", "Exception during video creation", e)
+                videoError = e.message ?: "Lỗi khi tạo video: ${e.javaClass.simpleName}"
+            } finally {
+                isCreatingVideo = false
+            }
+        }
     }
     
     fun uploadPhotosToDrive(photoList: List<PhotoMetadata>) {
@@ -167,6 +264,15 @@ fun PhotoGridScreen(
                 actions = {
                     if (isMultiSelectMode) {
                         if (selectedPhotos.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    // Show video creation dialog
+                                    showVideoDialog = true
+                                },
+                                enabled = !isCreatingVideo
+                            ) {
+                                Icon(Icons.Default.PlayArrow, "Create Video")
+                            }
                             if (isGoogleDriveConnected) {
                                 IconButton(
                                     onClick = {
@@ -196,9 +302,9 @@ fun PhotoGridScreen(
                             ) {
                                 Icon(Icons.Default.Edit, "Edit Date")
                             }
-                            IconButton(
-                                onClick = {
-                                    // Show confirmation dialog
+                        IconButton(
+                            onClick = {
+                                // Show confirmation dialog
                                     showDeleteDialog = true
                                 }
                             ) {
@@ -396,6 +502,40 @@ fun PhotoGridScreen(
                         uploadProgress = null
                         uploadError = null
                         uploadSuccess = false
+                    }
+                )
+            }
+            
+            // Video creation dialog
+            if (showVideoDialog) {
+                val selectedPhotoList = selectedPhotos.mapNotNull { path ->
+                    photos.firstOrNull { it.file.absolutePath == path }
+                }
+                VideoCreationDialog(
+                    photoCount = selectedPhotoList.size,
+                    onConfirm = { secondsPerImage ->
+                        showVideoDialog = false
+                        createVideo(selectedPhotoList, secondsPerImage)
+                    },
+                    onDismiss = {
+                        showVideoDialog = false
+                    }
+                )
+            }
+            
+            // Video creation progress dialog
+            if (isCreatingVideo || videoProgress != null || videoError != null || videoSuccess) {
+                VideoProgressDialog(
+                    isCreating = isCreatingVideo,
+                    progress = videoProgress,
+                    error = videoError,
+                    success = videoSuccess,
+                    videoFile = createdVideoFile,
+                    onDismiss = {
+                        videoProgress = null
+                        videoError = null
+                        videoSuccess = false
+                        createdVideoFile = null
                     }
                 )
             }
@@ -1139,6 +1279,191 @@ fun UploadProgressDialog(
             TextButton(
                 onClick = onDismiss,
                 enabled = !isUploading
+            ) {
+                Text("Đóng")
+            }
+        }
+    )
+}
+
+@Composable
+fun VideoCreationDialog(
+    photoCount: Int,
+    onConfirm: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var secondsPerImage by remember { mutableStateOf("1.0") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
+    val totalDuration = remember(secondsPerImage) {
+        try {
+            val seconds = secondsPerImage.toFloatOrNull() ?: 0f
+            val total = seconds * photoCount
+            String.format("%.1f", total)
+        } catch (e: Exception) {
+            "0.0"
+        }
+    }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Tạo video Time-lapse")
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Số ảnh đã chọn: $photoCount",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                
+                OutlinedTextField(
+                    value = secondsPerImage,
+                    onValueChange = { newValue ->
+                        errorMessage = null
+                        secondsPerImage = newValue
+                    },
+                    label = { Text("Giây mỗi ảnh") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = errorMessage != null
+                )
+                
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Thông tin video",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Thời lượng video: $totalDuration giây",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "Số khung hình: ${photoCount * 30}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val seconds = secondsPerImage.toFloatOrNull()
+                    if (seconds == null || seconds <= 0) {
+                        errorMessage = "Vui lòng nhập số giây hợp lệ (lớn hơn 0)"
+                    } else if (seconds > 10) {
+                        errorMessage = "Số giây mỗi ảnh không được vượt quá 10"
+                    } else {
+                        onConfirm(seconds)
+                    }
+                }
+            ) {
+                Text("Tạo video")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Hủy")
+            }
+        }
+    )
+}
+
+@Composable
+fun VideoProgressDialog(
+    isCreating: Boolean,
+    progress: Pair<Int, Int>?,
+    error: String?,
+    success: Boolean,
+    videoFile: File?,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!isCreating) {
+                onDismiss()
+            }
+        },
+        title = {
+            Text(
+                text = when {
+                    success -> "Tạo video thành công"
+                    error != null -> "Lỗi tạo video"
+                    else -> "Đang tạo video..."
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when {
+                    success -> {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        progress?.let { (current, total) ->
+                            Text("Đã xử lý $current/$total ảnh")
+                        } ?: Text("Video đã được tạo thành công")
+                        if (videoFile != null) {
+                            Text(
+                                text = "Video: ${videoFile.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    error != null -> {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    isCreating -> {
+                        CircularProgressIndicator()
+                        progress?.let { (current, total) ->
+                            Text("Đang xử lý ảnh $current/$total...")
+                            LinearProgressIndicator(
+                                progress = { current.toFloat() / total.toFloat() },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } ?: Text("Đang tạo video...")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isCreating
             ) {
                 Text("Đóng")
             }

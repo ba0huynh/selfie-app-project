@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
@@ -27,6 +28,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -64,9 +67,14 @@ fun SettingsScreen(
     var showPermissionRationale by remember { mutableStateOf(false) }
     var pendingEnableReminder by remember { mutableStateOf(false) }
     var showGoogleDriveDialog by remember { mutableStateOf(false) }
+    var showPinDialog by remember { mutableStateOf(false) }
     
     // Google Drive settings
     var googleDriveSettings by remember { mutableStateOf(prefs.getGoogleDriveSettings()) }
+    
+    // PIN settings
+    var pinEnabled by remember { mutableStateOf(prefs.isPinEnabled()) }
+    var hasPinSet by remember { mutableStateOf(prefs.hasPinSet()) }
     
     // For Android 13+ (API 33+), we need to request notification permission
     val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -244,17 +252,91 @@ fun SettingsScreen(
             
             Divider(modifier = Modifier.padding(vertical = 8.dp))
             
+            // Security Section
+            Text(
+                text = "Bảo mật",
+                style = MaterialTheme.typography.titleLarge
+            )
+            
+            Card(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            if (pinEnabled) Icons.Default.Lock else Icons.Default.Refresh,
+                            "PIN"
+                        )
+                        Column {
+                            Text("Mã PIN", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                if (pinEnabled) {
+                                    if (hasPinSet) "Đã bật mã PIN" else "Chưa thiết lập mã PIN"
+                                } else {
+                                    "Bảo vệ ứng dụng bằng mã PIN"
+                                },
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    
+                    Switch(
+                        checked = pinEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                // Check if PIN is already set
+                                if (hasPinSet) {
+                                    // Enable PIN protection
+                                    pinEnabled = true
+                                    prefs.setPinEnabled(true)
+                                } else {
+                                    // Show dialog to set PIN
+                                    showPinDialog = true
+                                }
+                            } else {
+                                // Disable PIN protection
+                                pinEnabled = false
+                                prefs.setPinEnabled(false)
+                            }
+                        }
+                    )
+                }
+            }
+            
+            if (pinEnabled && hasPinSet) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showPinDialog = true }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Thay đổi mã PIN")
+                        Icon(Icons.Default.ArrowForward, null)
+                    }
+                }
+            }
+            
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            
             // Other Settings
             Text(
                 text = "Khác",
                 style = MaterialTheme.typography.titleLarge
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Lock,
-                title = "Bảo mật",
-                subtitle = "Đang phát triển",
-                onClick = { }
             )
             
             SettingsItem(
@@ -336,6 +418,32 @@ fun SettingsScreen(
                         prefs.saveGoogleDriveSettings(googleDriveSettings)
                     },
                     onDismiss = { showGoogleDriveDialog = false }
+                )
+            }
+            
+            // PIN dialog
+            if (showPinDialog) {
+                PinDialog(
+                    isChangingPin = hasPinSet && pinEnabled,
+                    onPinSet = { newPin ->
+                        prefs.setPinCode(newPin)
+                        prefs.setPinEnabled(true)
+                        hasPinSet = true
+                        pinEnabled = true
+                        showPinDialog = false
+                    },
+                    onPinChanged = { newPin ->
+                        prefs.setPinCode(newPin)
+                        hasPinSet = true
+                        showPinDialog = false
+                    },
+                    onDismiss = {
+                        showPinDialog = false
+                        // If PIN wasn't set and user dismissed, reset switch
+                        if (!hasPinSet) {
+                            pinEnabled = false
+                        }
+                    }
                 )
             }
         }
@@ -747,5 +855,279 @@ fun GoogleDriveDialog(
             }
         }
     )
+}
+
+@Composable
+fun PinDialog(
+    isChangingPin: Boolean,
+    onPinSet: (String) -> Unit,
+    onPinChanged: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var currentPin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    // Step: -1 = verify old PIN, 0 = enter new PIN, 1 = confirm new PIN
+    var step by remember(isChangingPin) { mutableStateOf(if (isChangingPin) -1 else 0) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var oldPin by remember { mutableStateOf("") }
+    
+    // Reset state when dialog opens
+    LaunchedEffect(isChangingPin) {
+        currentPin = ""
+        confirmPin = ""
+        oldPin = ""
+        errorMessage = null
+        step = if (isChangingPin) -1 else 0
+    }
+    
+    // If changing PIN, first verify old PIN
+    val isVerifyingOldPin = step == -1
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = when {
+                    isVerifyingOldPin -> "Nhập mã PIN hiện tại"
+                    step == 0 -> "Mã PIN mới"
+                    else -> "Xác nhận mã PIN"
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                
+                // PIN input display
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 8.dp)
+                ) {
+                    val pinToShow = when {
+                        isVerifyingOldPin -> oldPin
+                        step == 0 -> currentPin
+                        else -> confirmPin
+                    }
+                    
+                    repeat(4) { index ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (index < pinToShow.length) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (index < pinToShow.length) {
+                                    Text(
+                                        text = "●",
+                                        fontSize = 24.sp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Number pad
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Rows 1-3
+                    (1..3).forEach { row ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ((row - 1) * 3 + 1..row * 3).forEach { num ->
+                                NumberButton(
+                                    number = num.toString(),
+                                    onClick = {
+                                        errorMessage = null
+                                        val pin = when {
+                                            isVerifyingOldPin -> oldPin
+                                            step == 0 -> currentPin
+                                            else -> confirmPin
+                                        }
+                                        
+                                        if (pin.length < 4) {
+                                            val newPin = pin + num
+                                            when {
+                                                isVerifyingOldPin -> {
+                                                    oldPin = newPin
+                                                    if (newPin.length == 4) {
+                                                        // Verify old PIN
+                                                        val prefs = PreferencesManager(context)
+                                                        if (prefs.verifyPin(newPin)) {
+                                                            step = 0 // Move to set new PIN
+                                                            oldPin = ""
+                                                            errorMessage = null
+                                                        } else {
+                                                            errorMessage = "Mã PIN không đúng"
+                                                            oldPin = ""
+                                                        }
+                                                    }
+                                                }
+                                                step == 0 -> {
+                                                    currentPin = newPin
+                                                    if (newPin.length == 4) {
+                                                        step = 1 // Move to confirm
+                                                        errorMessage = null
+                                                    }
+                                                }
+                                                else -> {
+                                                    confirmPin = newPin
+                                                    if (newPin.length == 4) {
+                                                        // Verify PINs match
+                                                        if (currentPin == newPin) {
+                                                            if (isChangingPin) {
+                                                                onPinChanged(newPin)
+                                                            } else {
+                                                                onPinSet(newPin)
+                                                            }
+                                                        } else {
+                                                            errorMessage = "Mã PIN không khớp"
+                                                            currentPin = ""
+                                                            confirmPin = ""
+                                                            step = 0
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Row 4: 0 and backspace
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Spacer(modifier = Modifier.weight(1f))
+                        NumberButton(
+                            number = "0",
+                            onClick = {
+                                errorMessage = null
+                                val pin = when {
+                                    isVerifyingOldPin -> oldPin
+                                    step == 0 -> currentPin
+                                    else -> confirmPin
+                                }
+                                
+                                if (pin.length < 4) {
+                                    val newPin = pin + "0"
+                                    when {
+                                        isVerifyingOldPin -> {
+                                            oldPin = newPin
+                                            if (newPin.length == 4) {
+                                                val prefs = PreferencesManager(context)
+                                                if (prefs.verifyPin(newPin)) {
+                                                    step = 0 // Move to set new PIN
+                                                    oldPin = ""
+                                                    errorMessage = null
+                                                } else {
+                                                    errorMessage = "Mã PIN không đúng"
+                                                    oldPin = ""
+                                                }
+                                            }
+                                        }
+                                        step == 0 -> {
+                                            currentPin = newPin
+                                            if (newPin.length == 4) {
+                                                step = 1 // Move to confirm
+                                                errorMessage = null
+                                            }
+                                        }
+                                        else -> {
+                                            confirmPin = newPin
+                                            if (newPin.length == 4) {
+                                                if (currentPin == newPin) {
+                                                    if (isChangingPin) {
+                                                        onPinChanged(newPin)
+                                                    } else {
+                                                        onPinSet(newPin)
+                                                    }
+                                                } else {
+                                                    errorMessage = "Mã PIN không khớp"
+                                                    currentPin = ""
+                                                    confirmPin = ""
+                                                    step = 0
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        IconButton(
+                            onClick = {
+                                errorMessage = null
+                                when {
+                                    isVerifyingOldPin -> {
+                                        if (oldPin.isNotEmpty()) {
+                                            oldPin = oldPin.dropLast(1)
+                                        }
+                                    }
+                                    step == 0 -> {
+                                        if (currentPin.isNotEmpty()) {
+                                            currentPin = currentPin.dropLast(1)
+                                        }
+                                    }
+                                    else -> {
+                                        if (confirmPin.isNotEmpty()) {
+                                            confirmPin = confirmPin.dropLast(1)
+                                        }
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Delete, "Xóa")
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Hủy")
+            }
+        }
+    )
+}
+
+@Composable
+fun NumberButton(
+    number: String,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.size(64.dp),
+        shape = RoundedCornerShape(32.dp)
+    ) {
+        Text(
+            text = number,
+            style = MaterialTheme.typography.titleLarge
+        )
+    }
 }
 
