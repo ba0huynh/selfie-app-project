@@ -109,7 +109,7 @@ class VideoCreator {
                         val h = if (it % 2 == 0) it else it - 1
                         h.coerceAtMost(480).coerceAtLeast(64)
                     }
-                    return createVideoWithDimensions(imageFiles, outputFile, secondsPerImage, smallerWidth, smallerHeight, onProgress)
+                    return@withContext createVideoWithDimensions(imageFiles, outputFile, secondsPerImage, smallerWidth, smallerHeight, onProgress)
                 }
                 return@withContext Result.failure(Exception("Không tìm thấy encoder phù hợp cho video ${videoWidth}x${videoHeight}"))
             }
@@ -142,7 +142,7 @@ class VideoCreator {
                         val h = if (it % 2 == 0) it else it - 1
                         h.coerceAtMost(480).coerceAtLeast(64)
                     }
-                    return createVideoWithDimensions(imageFiles, outputFile, secondsPerImage, smallerWidth, smallerHeight, onProgress)
+                    return@withContext createVideoWithDimensions(imageFiles, outputFile, secondsPerImage, smallerWidth, smallerHeight, onProgress)
                 }
                 
                 return@withContext Result.failure(Exception("Không thể cấu hình encoder: ${e.message}. Vui lòng thử với ít ảnh hơn hoặc ảnh có kích thước nhỏ hơn."))
