@@ -24,6 +24,7 @@ import com.example.selfie.ui.camera.CameraScreen
 import com.example.selfie.ui.photoEdit.PhotoEditScreen
 import com.example.selfie.ui.photoGrid.PhotoGridScreen
 import com.example.selfie.ui.photoViewer.PhotoViewerScreen
+import com.example.selfie.ui.videoViewer.VideoViewerScreen
 import com.example.selfie.ui.settings.SettingsScreen
 import com.example.selfie.ui.pin.PinVerificationScreen
 import com.example.selfie.ui.theme.SelfieTheme
@@ -116,6 +117,10 @@ class MainActivity : ComponentActivity() {
                                         val encodedPath = URLEncoder.encode(photoPath, "UTF-8")
                                         navController.navigate("photo_viewer/$encodedPath")
                                     },
+                                    onNavigateToVideoViewer = { videoPath ->
+                                        val encodedPath = URLEncoder.encode(videoPath, "UTF-8")
+                                        navController.navigate("video_viewer/$encodedPath")
+                                    },
                                     onNavigateToSettings = {
                                         navController.navigate(Screen.Settings.route)
                                     }
@@ -166,6 +171,22 @@ class MainActivity : ComponentActivity() {
                                         navController.popBackStack()
                                     },
                                     onPhotoDeleted = {
+                                        navController.popBackStack()
+                                    }
+                                )
+                            }
+                        }
+                        
+                        composable("video_viewer/{videoPath}") { backStackEntry ->
+                            val encodedPath = backStackEntry.arguments?.getString("videoPath")
+                            val videoPath = encodedPath?.let { URLDecoder.decode(it, "UTF-8") }
+                            if (videoPath != null) {
+                                VideoViewerScreen(
+                                    videoPath = videoPath,
+                                    onBack = {
+                                        navController.popBackStack()
+                                    },
+                                    onVideoDeleted = {
                                         navController.popBackStack()
                                     }
                                 )

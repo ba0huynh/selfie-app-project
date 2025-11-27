@@ -161,5 +161,98 @@ class PhotoRepository(private val context: Context) {
             .remove("${file.absolutePath}_id")
             .apply()
     }
+    
+    // Video management methods
+    private val videoDir: File
+        get() = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) 
+            ?: File(context.filesDir, "videos").also { it.mkdirs() }
+    
+    private val videoNotesPrefs: SharedPreferences by lazy {
+        context.getSharedPreferences("video_notes", Context.MODE_PRIVATE)
+    }
+    
+    private val videoEmojiPrefs: SharedPreferences by lazy {
+        context.getSharedPreferences("video_emojis", Context.MODE_PRIVATE)
+    }
+    
+    private val videoDatePrefs: SharedPreferences by lazy {
+        context.getSharedPreferences("video_dates", Context.MODE_PRIVATE)
+    }
+    
+    init {
+        videoDir.mkdirs()
+    }
+    
+    fun saveVideo(videoFile: File): File {
+        // Video file is already created, just ensure it's in the right directory
+        if (videoFile.parentFile?.absolutePath != videoDir.absolutePath) {
+            val newFile = File(videoDir, videoFile.name)
+            videoFile.copyTo(newFile, overwrite = true)
+            videoFile.delete()
+            return newFile
+        }
+        return videoFile
+    }
+    
+    fun getAllVideos(): List<VideoMetadata> {
+        return videoDir.listFiles()
+            ?.filter { it.isFile && (it.extension.lowercase() == "mp4" || it.extension.lowercase() == "mov") }
+            ?.map { file ->
+                VideoMetadata(
+                    file = file,
+                    dateCreated = getVideoDate(file),
+                    note = getVideoNote(file),
+                    emoji = getVideoEmoji(file)
+                )
+            }
+            ?.sortedByDescending { it.dateCreated } ?: emptyList()
+    }
+    
+    fun deleteVideo(file: File): Boolean {
+        // Also clean up metadata
+        videoNotesPrefs.edit().remove(file.absolutePath).apply()
+        videoEmojiPrefs.edit().remove(file.absolutePath).apply()
+        videoDatePrefs.edit().remove(file.absolutePath).apply()
+        return file.delete()
+    }
+    
+    fun saveVideoNote(file: File, note: String) {
+        videoNotesPrefs.edit()
+            .putString(file.absolutePath, note)
+            .apply()
+    }
+    
+    fun getVideoNote(file: File): String {
+        return videoNotesPrefs.getString(file.absolutePath, "") ?: ""
+    }
+    
+    fun saveVideoEmoji(file: File, emoji: String) {
+        videoEmojiPrefs.edit()
+            .putString(file.absolutePath, emoji)
+            .apply()
+    }
+    
+    fun getVideoEmoji(file: File): String {
+        return videoEmojiPrefs.getString(file.absolutePath, "") ?: ""
+    }
+    
+    fun saveVideoDate(file: File, date: Date) {
+        videoDatePrefs.edit()
+            .putLong(file.absolutePath, date.time)
+            .apply()
+    }
+    
+    fun getVideoDate(file: File): Date {
+        val customDate = videoDatePrefs.getLong(file.absolutePath, -1)
+        return if (customDate != -1L) {
+            Date(customDate)
+        } else {
+            Date(file.lastModified())
+        }
+    }
+    
+    fun getVideoCount(): Int {
+        return videoDir.listFiles()?.count { it.isFile } ?: 0
+    }
 }
 

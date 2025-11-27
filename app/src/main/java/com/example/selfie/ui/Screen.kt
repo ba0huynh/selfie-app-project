@@ -10,6 +10,9 @@ sealed class Screen(val route: String) {
     object PhotoViewer : Screen("photo_viewer/{photoPath}") {
         fun createRoute(photoPath: String) = "photo_viewer/${photoPath}"
     }
+    object VideoViewer : Screen("video_viewer/{videoPath}") {
+        fun createRoute(videoPath: String) = "video_viewer/${videoPath}"
+    }
     object Settings : Screen("settings")
 }
 

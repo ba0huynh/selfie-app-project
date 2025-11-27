@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import com.example.selfie.util.selectable
 import androidx.compose.runtime.*
@@ -38,16 +40,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.example.selfie.data.PhotoMetadata
+import com.example.selfie.data.VideoMetadata
 import com.example.selfie.data.PhotoRepository
 import com.example.selfie.data.GoogleDriveManager
 import com.example.selfie.data.PreferencesManager
 import com.example.selfie.util.VideoCreator
 import kotlinx.coroutines.launch
 import android.os.Environment
-import android.content.ContentValues
-import android.provider.MediaStore
-import android.content.Intent
-import android.net.Uri
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -55,11 +54,24 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.Date
 
+// Sealed class to represent both photos and videos
+sealed class MediaItem {
+    data class Photo(val metadata: PhotoMetadata) : MediaItem()
+    data class Video(val metadata: VideoMetadata) : MediaItem()
+    
+    val date: Date
+        get() = when (this) {
+            is Photo -> metadata.dateTaken
+            is Video -> metadata.dateCreated
+        }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotoGridScreen(
     onNavigateToCamera: () -> Unit,
     onNavigateToPhotoViewer: (String) -> Unit,
+    onNavigateToVideoViewer: (String) -> Unit = {},
     onNavigateToSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -67,6 +79,7 @@ fun PhotoGridScreen(
     val prefs = remember { PreferencesManager(context) }
     val scope = rememberCoroutineScope()
     var photos by remember { mutableStateOf<List<PhotoMetadata>>(emptyList()) }
+    var videos by remember { mutableStateOf<List<VideoMetadata>>(emptyList()) }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedPhotos by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -97,13 +110,15 @@ fun PhotoGridScreen(
         googleDriveSettings = prefs.getGoogleDriveSettings()
     }
     
-    // Load photos whenever this composable is created or recomposed
+    // Load photos and videos whenever this composable is created or recomposed
     LaunchedEffect(Unit) {
         photos = repository.getAllPhotos()
+        videos = repository.getAllVideos()
     }
     
     fun refreshPhotos() {
         photos = repository.getAllPhotos()
+        videos = repository.getAllVideos()
     }
     
     fun createVideo(photoList: List<PhotoMetadata>, secondsPerImage: Float) {
@@ -145,33 +160,17 @@ fun PhotoGridScreen(
                 )
                 
                 if (result.isSuccess) {
-                    // Save to MediaStore for gallery access (Android 10+)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                        val contentValues = ContentValues().apply {
-                            put(MediaStore.Video.Media.DISPLAY_NAME, videoFile.name)
-                            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
-                        }
-                        
-                        val uri = context.contentResolver.insert(
-                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                            contentValues
-                        )
-                        
-                        uri?.let {
-                            context.contentResolver.openOutputStream(it)?.use { outputStream ->
-                                videoFile.inputStream().use { inputStream ->
-                                    inputStream.copyTo(outputStream)
-                                }
-                            }
-                            // Delete temporary file after copying
-                            videoFile.delete()
-                        }
-                    }
+                    // Save video to repository (app storage)
+                    val savedVideoFile = repository.saveVideo(videoFile)
+                    // Set creation date based on first photo's date
+                    val firstPhotoDate = photoList.firstOrNull()?.dateTaken ?: Date()
+                    repository.saveVideoDate(savedVideoFile, firstPhotoDate)
                     
-                    createdVideoFile = videoFile
+                    createdVideoFile = savedVideoFile
                     videoSuccess = true
                     videoError = null
+                    // Refresh videos list
+                    refreshPhotos()
                 } else {
                     val exception = result.exceptionOrNull()
                     val errorMsg = exception?.message ?: "Lỗi không xác định khi tạo video"
@@ -346,9 +345,19 @@ fun PhotoGridScreen(
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when {
-                photos.isEmpty() -> EmptyState(onTakePhoto = onNavigateToCamera)
+                photos.isEmpty() && videos.isEmpty() -> EmptyState(onTakePhoto = onNavigateToCamera)
                 else -> {
-                    val groupedPhotos = photos.groupBy { dateToString(it.dateTaken) }
+                    // Combine photos and videos into a unified list
+                    val allMedia = remember(photos, videos) {
+                        (photos.map { MediaItem.Photo(it) } + videos.map { MediaItem.Video(it) })
+                            .sortedByDescending { it.date }
+                    }
+                    val groupedMedia = allMedia.groupBy { 
+                        when (it) {
+                            is MediaItem.Photo -> dateToString(it.metadata.dateTaken)
+                            is MediaItem.Video -> dateToString(it.metadata.dateCreated)
+                        }
+                    }
                     val memories = remember(photos) { findMemories(photos) }
                     
                     LazyColumn(
@@ -385,13 +394,13 @@ fun PhotoGridScreen(
                             }
                         }
                         
-                        groupedPhotos.forEach { (dateLabel, datePhotos) ->
+                        groupedMedia.forEach { (dateLabel, dateItems) ->
                             item {
                                 DateHeader(label = dateLabel)
                             }
-                            items(datePhotos.chunked(3)) { rowPhotos ->
-                                PhotoRow(
-                                    photos = rowPhotos,
+                            items(dateItems.chunked(3)) { rowItems ->
+                                MediaRow(
+                                    items = rowItems,
                                     isMultiSelectMode = isMultiSelectMode,
                                     selectedPhotos = selectedPhotos,
                                     repository = repository,
@@ -405,6 +414,11 @@ fun PhotoGridScreen(
                                             }
                                         } else {
                                             onNavigateToPhotoViewer(photo.file.absolutePath)
+                                        }
+                                    },
+                                    onVideoClick = { video ->
+                                        if (!isMultiSelectMode) {
+                                            onNavigateToVideoViewer(video.file.absolutePath)
                                         }
                                     },
                                     onPhotoLongPress = {
@@ -544,6 +558,55 @@ fun PhotoGridScreen(
 }
 
 @Composable
+fun MediaRow(
+    items: List<MediaItem>,
+    isMultiSelectMode: Boolean,
+    selectedPhotos: Set<String>,
+    repository: PhotoRepository,
+    onPhotoClick: (PhotoMetadata) -> Unit,
+    onVideoClick: (VideoMetadata) -> Unit,
+    onPhotoLongPress: (PhotoMetadata) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items.forEach { item ->
+            when (item) {
+                is MediaItem.Photo -> {
+                    PhotoItem(
+                        photo = item.metadata,
+                        isSelected = selectedPhotos.contains(item.metadata.file.absolutePath),
+                        isMultiSelectMode = isMultiSelectMode,
+                        isUploaded = repository.isPhotoUploaded(item.metadata.file),
+                        onPhotoClick = { onPhotoClick(item.metadata) },
+                        onPhotoLongPress = { onPhotoLongPress(item.metadata) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                    )
+                }
+                is MediaItem.Video -> {
+                    VideoItem(
+                        video = item.metadata,
+                        repository = repository,
+                        onVideoClick = { onVideoClick(item.metadata) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                    )
+                }
+            }
+        }
+        // Fill remaining space if less than 3 items
+        repeat(3 - items.size) {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
 fun PhotoRow(
     photos: List<PhotoMetadata>,
     isMultiSelectMode: Boolean,
@@ -664,6 +727,86 @@ fun PhotoItem(
             ) {
                 Text(
                     text = photo.emoji,
+                    fontSize = 16.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoItem(
+    video: VideoMetadata,
+    repository: PhotoRepository,
+    onVideoClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onVideoClick)
+    ) {
+        // Try to show a thumbnail from the video file
+        // For now, show a placeholder with video icon
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Video",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Video",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        
+        // Play icon overlay
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(8.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+        
+        // Emoji in bottom left
+        if (!video.emoji.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = video.emoji,
                     fontSize = 16.sp
                 )
             }
