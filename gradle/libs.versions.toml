@@ -15,6 +15,9 @@ accompanistPermissions = "0.36.0"
 navigationCompose = "2.8.1"
 accompanistSystemUiController = "0.32.0"
 androidxComposeFoundation = "1.7.4"
+googlePlayServicesAuth = "21.2.0"
+googleApiClient = "2.2.0"
+googleApiServicesDrive = "v3-rev20220815-2.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +44,9 @@ accompanistPermissions = { group = "com.google.accompanist", name = "accompanist
 accompanistSystemUiController = { group = "com.google.accompanist", name = "accompanist-systemuicontroller", version.ref = "accompanistSystemUiController" }
 navigationCompose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidxComposeFoundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "androidxComposeFoundation" }
+googlePlayServicesAuth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "googlePlayServicesAuth" }
+googleApiClient = { group = "com.google.api-client", name = "google-api-client-android", version.ref = "googleApiClient" }
+googleApiServicesDrive = { group = "com.google.apis", name = "google-api-services-drive", version.ref = "googleApiServicesDrive" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

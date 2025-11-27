@@ -21,6 +21,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import com.example.selfie.util.selectable
 import androidx.compose.runtime.*
@@ -36,6 +39,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.example.selfie.data.PhotoMetadata
 import com.example.selfie.data.PhotoRepository
+import com.example.selfie.data.GoogleDriveManager
+import com.example.selfie.data.PreferencesManager
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -50,6 +56,8 @@ fun PhotoGridScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { PhotoRepository(context) }
+    val prefs = remember { PreferencesManager(context) }
+    val scope = rememberCoroutineScope()
     var photos by remember { mutableStateOf<List<PhotoMetadata>>(emptyList()) }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedPhotos by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -57,6 +65,21 @@ fun PhotoGridScreen(
     var showDatePickerDialog by remember { mutableStateOf(false) }
     var photosToEditDate by remember { mutableStateOf<List<PhotoMetadata>>(emptyList()) }
     var showMemoryPhotos by remember { mutableStateOf<Pair<Int, List<PhotoMetadata>>?>(null) }
+    
+    // Google Drive upload state
+    var isUploading by remember { mutableStateOf(false) }
+    var uploadProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var uploadError by remember { mutableStateOf<String?>(null) }
+    var uploadSuccess by remember { mutableStateOf(false) }
+    
+    // Check Google Drive connection - refresh when screen is recomposed
+    var googleDriveSettings by remember { mutableStateOf(prefs.getGoogleDriveSettings()) }
+    val isGoogleDriveConnected = googleDriveSettings.isConnected
+    
+    // Refresh Google Drive settings
+    LaunchedEffect(Unit) {
+        googleDriveSettings = prefs.getGoogleDriveSettings()
+    }
     
     // Load photos whenever this composable is created or recomposed
     LaunchedEffect(Unit) {
@@ -67,32 +90,129 @@ fun PhotoGridScreen(
         photos = repository.getAllPhotos()
     }
     
+    fun uploadPhotosToDrive(photoList: List<PhotoMetadata>) {
+        if (!isGoogleDriveConnected) {
+            uploadError = "Chưa kết nối với Google Drive. Vui lòng kết nối trong Cài đặt."
+            return
+        }
+        
+        scope.launch {
+            isUploading = true
+            uploadError = null
+            uploadSuccess = false
+            uploadProgress = Pair(0, photoList.size)
+            
+            try {
+                // Initialize Google Drive Manager
+                val driveManager = GoogleDriveManager(context)
+                val accountEmail = googleDriveSettings.accountEmail
+                if (accountEmail.isNotEmpty()) {
+                    driveManager.initializeCredential(accountEmail)
+                } else {
+                    throw IllegalStateException("Account email not found")
+                }
+                
+                // Upload photos to "selfie" folder
+                val photoFiles = photoList.map { it.file }
+                val result = driveManager.uploadPhotosToFolder(
+                    photoFiles = photoFiles,
+                    folderName = "selfie",
+                    onProgress = { current, total ->
+                        uploadProgress = Pair(current, total)
+                    }
+                )
+                
+                if (result.isSuccess) {
+                    val successCount = result.getOrNull() ?: 0
+                    // Mark photos as uploaded
+                    photoList.forEach { photo ->
+                        repository.markPhotoAsUploaded(photo.file)
+                    }
+                    uploadSuccess = true
+                    uploadError = null
+                    // Refresh photos to update UI
+                    refreshPhotos()
+                    // Clear selection after successful upload
+                    isMultiSelectMode = false
+                    selectedPhotos = emptySet()
+                } else {
+                    val exception = result.exceptionOrNull()
+                    uploadError = exception?.message ?: "Lỗi không xác định khi tải lên"
+                }
+            } catch (e: Exception) {
+                uploadError = e.message ?: "Lỗi khi tải lên ảnh"
+            } finally {
+                isUploading = false
+            }
+        }
+    }
+    
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Nhật ký Selfie", style = MaterialTheme.typography.titleLarge) },
+                title = {
+                    if (isMultiSelectMode) {
+                        Text(
+                            text = if (selectedPhotos.isNotEmpty()) {
+                                "${selectedPhotos.size} ảnh đã chọn"
+                            } else {
+                                "Chọn ảnh"
+                            },
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    } else {
+                        Text("Nhật ký Selfie", style = MaterialTheme.typography.titleLarge)
+                    }
+                },
                 actions = {
-                    if (isMultiSelectMode && selectedPhotos.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                // Show date picker for selected photos
-                                val selectedPhotoList = selectedPhotos.mapNotNull { path ->
-                                        photos.firstOrNull { it.file.absolutePath == path }
-                                }
-                                if (selectedPhotoList.isNotEmpty()) {
-                                    photosToEditDate = selectedPhotoList
+                    if (isMultiSelectMode) {
+                        if (selectedPhotos.isNotEmpty()) {
+                            if (isGoogleDriveConnected) {
+                                IconButton(
+                                    onClick = {
+                                        // Upload selected photos to Google Drive
+                                        val selectedPhotoList = selectedPhotos.mapNotNull { path ->
+                                            photos.firstOrNull { it.file.absolutePath == path }
+                                        }
+                                        if (selectedPhotoList.isNotEmpty()) {
+                                            uploadPhotosToDrive(selectedPhotoList)
+                                        }
+                                    },
+                                    enabled = !isUploading
+                                ) {
+                                    Icon(Icons.Default.KeyboardArrowUp, "Upload to Google Drive")
                                 }
                             }
-                        ) {
-                            Icon(Icons.Default.Edit, "Edit Date")
+                            IconButton(
+                                onClick = {
+                                    // Show date picker for selected photos
+                                    val selectedPhotoList = selectedPhotos.mapNotNull { path ->
+                                            photos.firstOrNull { it.file.absolutePath == path }
+                                    }
+                                    if (selectedPhotoList.isNotEmpty()) {
+                                        photosToEditDate = selectedPhotoList
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.Edit, "Edit Date")
+                            }
+                            IconButton(
+                                onClick = {
+                                    // Show confirmation dialog
+                                    showDeleteDialog = true
+                                }
+                            ) {
+                                Icon(Icons.Default.Delete, "Delete")
+                            }
                         }
+                        // Close button to exit multi-select mode
                         IconButton(
                             onClick = {
-                                // Show confirmation dialog
-                                showDeleteDialog = true
+                                isMultiSelectMode = false
+                                selectedPhotos = emptySet()
                             }
                         ) {
-                            Icon(Icons.Default.Delete, "Delete")
+                            Icon(Icons.Default.Close, "Cancel selection")
                         }
                     } else {
                         IconButton(
@@ -168,6 +288,7 @@ fun PhotoGridScreen(
                                     photos = rowPhotos,
                                     isMultiSelectMode = isMultiSelectMode,
                                     selectedPhotos = selectedPhotos,
+                                    repository = repository,
                                     onPhotoClick = { photo ->
                                         if (isMultiSelectMode) {
                                             val path = photo.file.absolutePath
@@ -263,6 +384,21 @@ fun PhotoGridScreen(
                     }
                 )
             }
+            
+            // Upload progress dialog
+            if (isUploading || uploadProgress != null || uploadError != null || uploadSuccess) {
+                UploadProgressDialog(
+                    isUploading = isUploading,
+                    progress = uploadProgress,
+                    error = uploadError,
+                    success = uploadSuccess,
+                    onDismiss = {
+                        uploadProgress = null
+                        uploadError = null
+                        uploadSuccess = false
+                    }
+                )
+            }
         }
     }
 }
@@ -272,6 +408,7 @@ fun PhotoRow(
     photos: List<PhotoMetadata>,
     isMultiSelectMode: Boolean,
     selectedPhotos: Set<String>,
+    repository: PhotoRepository,
     onPhotoClick: (PhotoMetadata) -> Unit,
     onPhotoLongPress: (PhotoMetadata) -> Unit,
     modifier: Modifier = Modifier
@@ -285,6 +422,7 @@ fun PhotoRow(
                 photo = photo,
                 isSelected = selectedPhotos.contains(photo.file.absolutePath),
                 isMultiSelectMode = isMultiSelectMode,
+                isUploaded = repository.isPhotoUploaded(photo.file),
                 onPhotoClick = { onPhotoClick(photo) },
                 onPhotoLongPress = { onPhotoLongPress(photo) },
                 modifier = Modifier
@@ -304,6 +442,7 @@ fun PhotoItem(
     photo: PhotoMetadata,
     isSelected: Boolean,
     isMultiSelectMode: Boolean,
+    isUploaded: Boolean,
     onPhotoClick: () -> Unit,
     onPhotoLongPress: () -> Unit,
     modifier: Modifier = Modifier
@@ -350,6 +489,32 @@ fun PhotoItem(
             }
         }
         
+        // Cloud icon indicator in bottom right
+        if (isUploaded) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Uploaded to Google Drive",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(4.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+        
+        // Emoji in bottom left
         if (!photo.emoji.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -904,6 +1069,77 @@ fun MemoryPhotosDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
+                Text("Đóng")
+            }
+        }
+    )
+}
+
+@Composable
+fun UploadProgressDialog(
+    isUploading: Boolean,
+    progress: Pair<Int, Int>?,
+    error: String?,
+    success: Boolean,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!isUploading) {
+                onDismiss()
+            }
+        },
+        title = {
+            Text(
+                text = when {
+                    success -> "Tải lên thành công"
+                    error != null -> "Lỗi tải lên"
+                    else -> "Đang tải lên..."
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when {
+                    success -> {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        progress?.let { (current, total) ->
+                            Text("Đã tải lên $current/$total ảnh lên Google Drive")
+                        } ?: Text("Đã tải lên ảnh lên Google Drive")
+                    }
+                    error != null -> {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    isUploading -> {
+                        CircularProgressIndicator()
+                        progress?.let { (current, total) ->
+                            Text("Đang tải lên $current/$total ảnh...")
+                            LinearProgressIndicator(
+                                progress = { current.toFloat() / total.toFloat() },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } ?: Text("Đang tải lên...")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isUploading
+            ) {
                 Text("Đóng")
             }
         }

@@ -27,6 +27,10 @@ class PhotoRepository(private val context: Context) {
         context.getSharedPreferences("photo_dates", Context.MODE_PRIVATE)
     }
     
+    private val driveUploadPrefs: SharedPreferences by lazy {
+        context.getSharedPreferences("photo_drive_uploads", Context.MODE_PRIVATE)
+    }
+    
     init {
         photoDir.mkdirs()
         NoMediaUtils.ensureNoMediaFile(context)
@@ -129,6 +133,33 @@ class PhotoRepository(private val context: Context) {
     
     fun getPhotoCount(): Int {
         return photoDir.listFiles()?.count { it.isFile } ?: 0
+    }
+    
+    fun markPhotoAsUploaded(file: File, driveFileId: String? = null) {
+        driveUploadPrefs.edit()
+            .putBoolean(file.absolutePath, true)
+            .apply()
+        if (driveFileId != null) {
+            // Store the Drive file ID for potential future use
+            driveUploadPrefs.edit()
+                .putString("${file.absolutePath}_id", driveFileId)
+                .apply()
+        }
+    }
+    
+    fun isPhotoUploaded(file: File): Boolean {
+        return driveUploadPrefs.getBoolean(file.absolutePath, false)
+    }
+    
+    fun getPhotoDriveFileId(file: File): String? {
+        return driveUploadPrefs.getString("${file.absolutePath}_id", null)
+    }
+    
+    fun markPhotoAsNotUploaded(file: File) {
+        driveUploadPrefs.edit()
+            .remove(file.absolutePath)
+            .remove("${file.absolutePath}_id")
+            .apply()
     }
 }
 

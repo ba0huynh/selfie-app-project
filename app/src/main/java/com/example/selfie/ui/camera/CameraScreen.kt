@@ -207,7 +207,7 @@ fun CameraControls(
         }
         
         IconButton(onClick = onFlipCamera) {
-            Icon(Icons.Default.Refresh, "Flip Camera", tint = MaterialTheme.colorScheme.onBackground)
+            Icon(Icons.Default.Refresh  , "Flip Camera", tint = MaterialTheme.colorScheme.onBackground)
         }
     }
 }
