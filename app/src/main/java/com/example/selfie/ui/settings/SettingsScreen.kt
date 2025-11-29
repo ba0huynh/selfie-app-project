@@ -333,19 +333,6 @@ fun SettingsScreen(
             
             Divider(modifier = Modifier.padding(vertical = 8.dp))
             
-            // Other Settings
-            Text(
-                text = "Khác",
-                style = MaterialTheme.typography.titleLarge
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.ArrowForward,
-                title = "Tạo video Time-lapse",
-                subtitle = "Đang phát triển",
-                onClick = { }
-            )
-            
             if (showTimePicker) {
                 TimePickerDialog(
                     initialHour = reminderHour,
